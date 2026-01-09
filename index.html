@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>大量印刷くん (Simple Edition)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        :root {
+            /* 🍊 オレンジ中心の温かみのあるテーマ */
+            --primary: #f97316; /* Orange 500 */
+            --primary-hover: #ea580c; /* Orange 600 */
+            --accent: #0ea5e9; /* Sky 500 */
+            --accent-hover: #0284c7;
+            --danger: #ef4444;
+            --surface: #ffffff;
+            --bg: #fff7ed; /* Orange 50 */
+            --text: #431407; /* Dark Brown */
+            --border: #fed7aa; /* Orange 200 */
+        }
+        
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 10px;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+            overscroll-behavior: none;
+        }
+
+        .container {
+            background: var(--surface);
+            padding: 1.5rem;
+            border-radius: 20px;
+            box-shadow: 0 10px 25px -5px rgba(249, 115, 22, 0.15);
+            width: 100%;
+            max-width: 1200px; 
+            text-align: center;
+            position: relative;
+            border: 1px solid var(--border);
+        }
+
+        h1 { 
+            margin-bottom: 1rem; font-size: 1.8rem; color: var(--primary-hover); 
+            display: flex; align-items: center; justify-content: center; gap: 10px;
+            text-shadow: 1px 1px 0px #ffedd5;
+        }
+        h1::before { content: '🖨️'; font-size: 2rem; }
+
+        p { color: #9a3412; margin-bottom: 1rem; line-height: 1.6; }
+
+        /* Toolbar */
+        .project-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #ffedd5;
+            padding-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .status-group {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 8px;
+            flex-grow: 1;
+        }
+
+        .auto-save-status {
+            font-size: 0.9rem;
+            color: #ea580c;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .auto-save-status::before {
+            content: ''; display: inline-block; width: 10px; height: 10px;
+            border-radius: 50%; background-color: #fed7aa;
+        }
+        .auto-save-status.saving::before { background-color: var(--accent); } 
+        .auto-save-status.saved::before { background-color: var(--primary); }
+
+        .csv-status {
+            font-size: 0.9rem;
+            color: #0369a1;
+            font-weight: bold;
+            display: none;
+            background: #e0f2fe;
+            padding: 8px 12px;
+            border-radius: 8px;
+            text-align: left;
+            border: 1px solid #bae6fd;
+        }
+        .csv-status.active { display: block; }
+        .csv-keys { font-family: monospace; color: var(--accent-hover); display: block; margin-top: 4px; font-size: 0.85rem; }
+
+        .toolbar-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* Preset UI */
+        .preset-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            background: #fff7ed;
+            padding: 4px 8px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+        .preset-select {
+            padding: 8px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            font-size: 0.9rem;
+            background: white;
+            color: var(--text);
+            max-width: 150px;
+        }
+
+        /* File Upload */
+        .drop-zone {
+            border: 3px dashed var(--primary);
+            border-radius: 16px;
+            padding: 4rem 2rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #ffedd5;
+            margin-bottom: 1.5rem;
+            color: var(--primary-hover);
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: var(--accent);
+            background: #fff7ed;
+            color: var(--accent-hover);
+            transform: scale(1.01);
+        }
+        .drop-zone.disabled {
+            opacity: 0.6; cursor: not-allowed; background: #f1f5f9; border-color: #cbd5e1; color: #94a3b8;
+        }
+
+        .status {
+            margin-top: 1rem; font-weight: bold; min-height: 1.5rem;
+            white-space: pre-wrap; color: var(--accent); font-size: 1.1rem;
+        }
+
+        /* Editor */
+        #editorArea {
+            display: none;
+            flex-direction: column;
+            gap: 40px;
+            margin-top: 20px;
+            text-align: left;
+            align-items: center;
+            width: 100%;
+            background-color: #fed7aa;
+            padding: 20px;
+            border-radius: 12px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch; 
+        }
+        
+        #printArea { display: none; }
+
+        .editor-page {
+            position: relative;
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+            overflow: hidden;
+            background: white;
+            user-select: none;
+            border: 1px solid #cbd5e1;
+            width: 210mm; height: 297mm;
+            flex-shrink: 0;
+            margin: 0 auto;
+        }
+        .editor-page.landscape { width: 297mm; height: 210mm; }
+        
+        .editor-page img {
+            display: block; width: 100%; height: 100%;
+            object-fit: contain; pointer-events: auto; cursor: crosshair;
+        }
+
+        /* Input Box */
+        .input-placeholder {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.7);
+            border: 2px solid var(--primary);
+            resize: both;
+            overflow: hidden;
+            min-width: 40px;
+            min-height: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.15); 
+            transition: box-shadow 0.2s, background-color 0.2s;
+            border-radius: 4px;
+        }
+        
+        .input-placeholder:hover, .input-placeholder:focus-within {
+            background: rgba(255, 255, 255, 0.95);
+            border-color: var(--accent);
+            z-index: 100;
+            box-shadow: 0 10px 15px rgba(0,0,0,0.2);
+        }
+
+        .control-bar {
+            position: absolute;
+            top: 0; left: 0; width: 100%;
+            height: 28px;
+            display: flex; align-items: center;
+            background: var(--primary);
+            z-index: 10;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .input-placeholder:hover .control-bar, 
+        .input-placeholder:focus-within .control-bar { opacity: 1; }
+
+        .move-handle {
+            flex-grow: 1; height: 100%;
+            cursor: move;
+            display: flex; align-items: center;
+            padding-left: 8px; color: white;
+            font-size: 16px;
+            touch-action: none;
+        }
+        .move-handle::before { content: '✥'; margin-right: 6px; }
+
+        .font-size-input {
+            width: 45px; height: 22px;
+            font-size: 12px; border: none; border-radius: 4px;
+            margin-right: 4px; text-align: center;
+            background: white; color: #333;
+        }
+
+        .delete-btn {
+            width: 32px; height: 100%;
+            background: var(--danger); color: white;
+            font-size: 18px; font-weight: bold;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+        }
+
+        .input-placeholder textarea {
+            width: 100%; height: 100%;
+            border: none; background: transparent;
+            resize: none;
+            font-family: "Helvetica Neue", Arial, sans-serif;
+            padding: 4px;
+            padding-top: 30px;
+            outline: none; color: #000;
+            font-weight: 500; line-height: 1.2;
+            white-space: pre-wrap; overflow: hidden;
+            font-size: 16px;
+        }
+
+        .helper-text {
+            background: #fff7ed; color: #c2410c;
+            padding: 15px; border-radius: 8px;
+            font-size: 1rem; margin-bottom: 10px;
+            border: 2px solid #fed7aa; width: 100%; text-align: left;
+            line-height: 1.6;
+        }
+
+        /* Buttons */
+        .btn {
+            background: var(--primary); color: white; border: none;
+            padding: 10px 20px;
+            border-radius: 8px; font-weight: bold; cursor: pointer;
+            transition: transform 0.1s, background-color 0.2s;
+            font-size: 0.95rem;
+            display: inline-flex; align-items: center; gap: 6px;
+            min-height: 40px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .btn:active { transform: scale(0.96); }
+        .btn:hover { background-color: var(--primary-hover); }
+
+        .btn-secondary {
+            background: white; color: var(--text); border: 2px solid var(--border);
+        }
+        .btn-secondary:hover { background: #fff7ed; border-color: var(--primary); color: var(--primary); }
+        
+        .btn-accent { background: var(--accent); color: white; }
+        .btn-accent:hover { background-color: var(--accent-hover); }
+
+        .btn-danger-outline {
+            background: white; color: var(--danger); border: 2px solid #fecaca; padding: 10px 16px;
+        }
+        .btn-danger-outline:hover { background: #fef2f2; border-color: var(--danger); }
+
+        .btn-group { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+        .hidden { display: none !important; }
+        .w-100 { width: 100%; }
+
+        /* Restore Modal */
+        .restore-overlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.6);
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 200; border-radius: 12px; backdrop-filter: blur(4px);
+        }
+        .restore-box {
+            background: white; padding: 2rem; border-radius: 16px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            text-align: center; width: 90%; max-width: 400px;
+            border: 2px solid var(--primary);
+        }
+
+        /* Print Style */
+        @media print {
+            @page { margin: 0; size: auto; }
+            body { background: white; padding: 0; margin: 0; display: block; }
+            .container { 
+                box-shadow: none; border: none; padding: 0; max-width: none; width: 100%; 
+                background: transparent; position: static; 
+            }
+            .project-toolbar, h1, #uploadSection, .status, .helper-text, .actions, .restore-overlay { display: none !important; }
+            #editorArea { display: none !important; }
+            #printArea { 
+                display: block !important; margin: 0 !important; padding: 0 !important; width: 100% !important; 
+            }
+            .editor-page {
+                box-shadow: none !important; border: none !important; margin: 0 !important; padding: 0 !important;
+                page-break-after: always; page-break-inside: avoid;
+                width: 210mm !important; height: 297mm !important;
+                position: relative !important; left: 0 !important; top: 0 !important; transform: none !important;
+            }
+            .editor-page.landscape { width: 297mm !important; height: 210mm !important; }
+            .input-placeholder {
+                border: none !important; background: transparent !important; box-shadow: none !important; resize: none;
+            }
+            .control-bar { display: none !important; }
+            .input-placeholder textarea { 
+                padding: 0 !important; padding-top: 2px !important;
+                background: transparent !important; color: #000 !important; text-shadow: none !important;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container" id="mainContainer">
+        <div class="project-toolbar">
+            <div class="status-group">
+                <div class="auto-save-status" id="autoSaveStatus">保存されていません</div>
+                <div class="csv-status" id="csvStatus"></div>
+            </div>
+            <div class="toolbar-actions">
+                <div class="preset-group">
+                    <select id="presetSelector" class="preset-select">
+                        <option value="">-- プリセット --</option>
+                    </select>
+                    <button class="btn btn-secondary" id="loadPresetBtn" title="選択した配置を適用">読込</button>
+                    <button class="btn btn-secondary" id="savePresetBtn" title="現在の配置を保存">⭐ 保存</button>
+                </div>
+
+                <input type="file" id="csvInput" accept=".csv" class="hidden">
+                <button class="btn btn-secondary" onclick="document.getElementById('csvInput').click()">📂 CSV</button>
+
+                <button class="btn btn-accent" id="printBtn">🖨️ 差し込み印刷</button>
+                <button class="btn btn-danger-outline" id="clearDraftBtn" title="全消去">🗑️</button>
+            </div>
+        </div>
+
+        <h1>大量印刷くん</h1>
+        
+        <div id="uploadSection">
+            <p>初期設定：「雛形」データを取り込んで「☆保存」を押してください<br>
+            <strong>作業時はプリセットを選んで「読込」ボタンをおしてください</strong></p>
+            <div class="drop-zone disabled" id="dropZone">
+                ⏳ アプリを準備中...
+            </div>
+            <input type="file" id="fileInput" accept="application/pdf,.json" class="hidden">
+        </div>
+
+        <div class="status" id="status"></div>
+
+        <div id="restoreOverlay" class="restore-overlay hidden">
+            <div class="restore-box">
+                <h3>前回の続きから始めますか？</h3>
+                <p>保存された「<span id="restoreFileName">document</span>」の作業データがあります。</p>
+                <div class="btn-group">
+                    <button class="btn" id="restoreYesBtn">再開する</button>
+                    <button class="btn btn-secondary" id="restoreNoBtn">新規作成</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="editorArea">
+            <div class="helper-text">
+                👆 <strong>使い方:</strong> PDF上の入力したい場所を<strong>タップ/クリック</strong>してボックスを作ります。<br>
+                左上の「📂 CSV」から「利用者データ生成くん」で作った利用者データを読み込み、入力欄に <code>{{氏名}}</code> のように書くと差し込み印刷できます。<br>
+                <small>※「⭐ 保存」ボタンで現在のレイアウトをブラウザに記憶し、次回以降「読込」でPDFに適用できます。</small>
+            </div>
+        </div>
+
+        <div id="printArea"></div>
+    </div>
+
+    <script>
+        // --- Elements ---
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const csvInput = document.getElementById('csvInput');
+        const printBtn = document.getElementById('printBtn');
+        const clearDraftBtn = document.getElementById('clearDraftBtn');
+        const statusEl = document.getElementById('status');
+        const editorArea = document.getElementById('editorArea');
+        const printArea = document.getElementById('printArea');
+        const uploadSection = document.getElementById('uploadSection');
+        const autoSaveStatus = document.getElementById('autoSaveStatus');
+        const csvStatus = document.getElementById('csvStatus');
+        const restoreOverlay = document.getElementById('restoreOverlay');
+        const restoreFileName = document.getElementById('restoreFileName');
+        const restoreYesBtn = document.getElementById('restoreYesBtn');
+        const restoreNoBtn = document.getElementById('restoreNoBtn');
+        
+        // Preset Elements
+        const presetSelector = document.getElementById('presetSelector');
+        const savePresetBtn = document.getElementById('savePresetBtn');
+        const loadPresetBtn = document.getElementById('loadPresetBtn');
+
+        // --- State ---
+        let convertedPagesData = [];
+        let currentFileName = "document";
+        let isRestoring = false;
+        let csvData = null; 
+
+        // --- IndexedDB ---
+        const DB_CONFIG = { name: 'PDFFormTool_DB_v4', version: 1, store: 'drafts' };
+        let db = null;
+
+        function initDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_CONFIG.name, DB_CONFIG.version);
+                request.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains(DB_CONFIG.store)) db.createObjectStore(DB_CONFIG.store, { keyPath: 'id' });
+                };
+                request.onsuccess = (e) => {
+                    db = e.target.result;
+                    resolve(db);
+                    checkDraft();
+                };
+                request.onerror = (e) => reject(e);
+            });
+        }
+
+        async function saveDraftToDB() {
+            if (!db || isRestoring || convertedPagesData.length === 0) return;
+            updateAutoSaveStatus('saving');
+            const projectData = collectProjectData();
+            projectData.id = 'current_draft';
+            projectData.timestamp = Date.now();
+            try {
+                const tx = db.transaction([DB_CONFIG.store], 'readwrite');
+                tx.objectStore(DB_CONFIG.store).put(projectData);
+                tx.oncomplete = () => updateAutoSaveStatus('saved');
+            } catch(e) { console.error(e); updateAutoSaveStatus('error'); }
+        }
+
+        async function checkDraft() {
+            const tx = db.transaction([DB_CONFIG.store], 'readonly');
+            const req = tx.objectStore(DB_CONFIG.store).get('current_draft');
+            req.onsuccess = () => {
+                if (req.result && req.result.pages && req.result.pages.length > 0) {
+                    restoreFileName.textContent = req.result.meta ? req.result.meta.fileName : "document";
+                    restoreOverlay.classList.remove('hidden');
+                    restoreYesBtn.onclick = () => { restoreOverlay.classList.add('hidden'); loadProjectData(req.result); };
+                    restoreNoBtn.onclick = () => { restoreOverlay.classList.add('hidden'); clearDraftDB(); };
+                }
+            };
+        }
+
+        function clearDraftDB() {
+            if (!db) return;
+            const tx = db.transaction([DB_CONFIG.store], 'readwrite');
+            tx.objectStore(DB_CONFIG.store).delete('current_draft');
+            updateAutoSaveStatus('none');
+            if (convertedPagesData.length > 0) resetEditor();
+        }
+
+        function updateAutoSaveStatus(state) {
+            if (state === 'saving') {
+                autoSaveStatus.textContent = '保存中...'; autoSaveStatus.className = 'auto-save-status saving';
+            } else if (state === 'saved') {
+                autoSaveStatus.textContent = `自動保存済み (${new Date().toLocaleTimeString()})`; autoSaveStatus.className = 'auto-save-status saved';
+            } else if (state === 'error') {
+                autoSaveStatus.textContent = '保存失敗'; autoSaveStatus.style.color = 'var(--danger)';
+            } else {
+                autoSaveStatus.textContent = '保存されていません'; autoSaveStatus.className = 'auto-save-status';
+            }
+        }
+
+        let saveTimeout;
+        function triggerAutoSave() {
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(saveDraftToDB, 1000);
+        }
+
+        // --- Core PDF ---
+        async function initPdfWorker() {
+            const workerUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            try {
+                const response = await fetch(workerUrl);
+                if (!response.ok) throw new Error('Worker fetch failed');
+                const blob = await response.blob();
+                pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob);
+                dropZone.innerHTML = '📂 <strong>PDF</strong> または <strong>JSON</strong> を<br>ここにドロップ';
+                dropZone.classList.remove('disabled');
+                initDB();
+                refreshPresetList(); // Init Presets
+            } catch (error) {
+                console.error(error);
+                statusEl.textContent = '初期化エラー: ネット接続を確認してください';
+                pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+            }
+        }
+        initPdfWorker();
+
+        // --- Event Listeners ---
+        dropZone.addEventListener('click', () => !dropZone.classList.contains('disabled') && fileInput.click());
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); if(!dropZone.classList.contains('disabled')) dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        
+        dropZone.addEventListener('drop', (e) => { 
+            e.preventDefault(); 
+            dropZone.classList.remove('dragover'); 
+            if(dropZone.classList.contains('disabled')) return;
+            handleFileDrop(e.dataTransfer.files[0]);
+        });
+
+        fileInput.addEventListener('change', (e) => handleFileDrop(e.target.files[0]));
+        clearDraftBtn.addEventListener('click', () => confirm('現在の作業内容をすべて消去しますか？') && clearDraftDB());
+
+        // --- Preset Logic (LocalStorage) ---
+        const PRESET_KEY = 'print_kun_presets_v1';
+
+        function getPresets() {
+            try { return JSON.parse(localStorage.getItem(PRESET_KEY)) || []; } catch(e) { return []; }
+        }
+
+        function savePresetToList(name, layoutData) {
+            const presets = getPresets();
+            const existingIdx = presets.findIndex(p => p.name === name);
+            if (existingIdx >= 0) {
+                if(!confirm(`プリセット「${name}」は既に存在します。上書きしますか？`)) return;
+                presets[existingIdx].layout = layoutData;
+            } else {
+                presets.push({ name: name, layout: layoutData });
+            }
+            localStorage.setItem(PRESET_KEY, JSON.stringify(presets));
+            refreshPresetList();
+            alert(`プリセット「${name}」を保存しました。`);
+        }
+
+        function refreshPresetList() {
+            const presets = getPresets();
+            presetSelector.innerHTML = '<option value="">-- プリセット --</option>';
+            presets.forEach((p, idx) => {
+                const opt = document.createElement('option');
+                opt.value = idx;
+                opt.textContent = p.name;
+                presetSelector.appendChild(opt);
+            });
+        }
+
+        savePresetBtn.addEventListener('click', () => {
+            if (convertedPagesData.length === 0) return alert("保存するレイアウトがありません。PDFを読み込んでください。");
+            const name = prompt("プリセット名を入力してください（例: 請求書レイアウトA）");
+            if (!name) return;
+            
+            const currentData = collectProjectData();
+            const layoutOnly = currentData.pages.map(p => ({
+                pageId: p.pageId,
+                inputs: p.inputs
+            }));
+            savePresetToList(name, layoutOnly);
+        });
+
+        loadPresetBtn.addEventListener('click', () => {
+            if (convertedPagesData.length === 0) return alert("先に適用先のPDFを開いてください。");
+            const idx = presetSelector.value;
+            if (idx === "") return alert("プリセットを選択してください。");
+            
+            const presets = getPresets();
+            const preset = presets[idx];
+            if (!preset) return;
+
+            if(!confirm(`現在の配置をクリアして、プリセット「${preset.name}」を適用しますか？`)) return;
+
+            document.querySelectorAll('.input-placeholder').forEach(el => el.remove());
+
+            preset.layout.forEach(pLayout => {
+                const pageDiv = document.getElementById(`page-${pLayout.pageId}`);
+                if (pageDiv && pLayout.inputs) {
+                    const pW = pageDiv.clientWidth;
+                    const pH = pageDiv.clientHeight;
+                    
+                    pLayout.inputs.forEach(inp => {
+                        let x, y, w, h;
+                        x = (inp.xPct / 100) * pW;
+                        y = (inp.yPct / 100) * pH;
+                        w = (inp.wPct / 100) * pW;
+                        h = (inp.hPct / 100) * pH;
+                        createInputBox(pageDiv, x, y, w, h, inp.text, inp.fontSize || 16);
+                    });
+                }
+            });
+            triggerAutoSave();
+        });
+
+
+        // --- File Handlers ---
+        function handleFileDrop(file) {
+            if (!file) return;
+            if (file.type === 'application/pdf') {
+                processPdf(file);
+            } else if (file.name.toLowerCase().endsWith('.json')) {
+                loadProjectFile(file);
+            } else {
+                alert("PDFファイル(.pdf) または プロジェクトファイル(.json) を選択してください。");
+            }
+        }
+
+        // --- CSV Processing ---
+        csvInput.addEventListener('change', (e) => handleCsvUpload(e.target.files[0]));
+
+        function handleCsvUpload(file) {
+            if (!file) return;
+            const reader = new FileReader();
+            reader.readAsArrayBuffer(file);
+            reader.onload = (e) => {
+                const buffer = e.target.result;
+                const uint8 = new Uint8Array(buffer);
+                let text = '', encoding = 'unknown';
+                try {
+                    if (uint8.length >= 3 && uint8[0] === 0xEF && uint8[1] === 0xBB && uint8[2] === 0xBF) {
+                        text = new TextDecoder('utf-8').decode(uint8); encoding = 'UTF-8 (BOM)';
+                    } else {
+                        text = new TextDecoder('utf-8', { fatal: true }).decode(uint8); encoding = 'UTF-8';
+                    }
+                } catch (err) {
+                    try { text = new TextDecoder('shift_jis').decode(uint8); encoding = 'Shift-JIS'; } 
+                    catch (sjisErr) { alert("CSV読込失敗: エンコーディング不明"); return; }
+                }
+                parseAndSetCsv(text, encoding);
+                csvInput.value = '';
+            };
+        }
+
+        function parseAndSetCsv(text, encodingName) {
+            const rows = [];
+            let row = [], cur = "", insideQuote = false;
+            text = text.trim();
+            for (let i = 0; i < text.length; i++) {
+                const c = text[i];
+                if (insideQuote) {
+                    if (c === '"') {
+                        if (i + 1 < text.length && text[i + 1] === '"') { cur += '"'; i++; } else { insideQuote = false; }
+                    } else { cur += c; }
+                } else {
+                    if (c === '"') { insideQuote = true; } 
+                    else if (c === ',') { row.push(cur); cur = ""; } 
+                    else if (c === '\n' || c === '\r') {
+                        if (cur || row.length > 0) row.push(cur);
+                        if (row.length > 0) rows.push(row);
+                        row = [], cur = "";
+                        if (c === '\r' && i + 1 < text.length && text[i + 1] === '\n') i++;
+                    } else { cur += c; }
+                }
+            }
+            if (cur || row.length > 0) { row.push(cur); rows.push(row); }
+
+            if (rows.length < 3) { return alert("CSVエラー: 2行目(項目名)と3行目(データ)が必要です。"); }
+
+            const headers = rows[1].map(h => h.trim()); 
+            const dataRows = rows.slice(2);
+            csvData = { headers, rows: dataRows };
+            
+            const keyPreview = headers.map(h => `{{${h}}}`).join(', ');
+            csvStatus.innerHTML = `✅ CSV読込完了 (${encodingName}): ${dataRows.length}件<br><span class="csv-keys">キー: ${keyPreview}</span>`;
+            csvStatus.classList.add('active');
+            printBtn.textContent = `🖨️ ${dataRows.length}件を印刷`;
+            alert(`CSV読み込み成功！\n有効なキー:\n${keyPreview}`);
+        }
+
+        // --- Print Logic ---
+        printBtn.addEventListener('click', () => {
+            preparePrintDOM();
+            setTimeout(() => { window.print(); }, 500);
+        });
+
+        function preparePrintDOM() {
+            printArea.innerHTML = ''; 
+            const currentData = collectProjectData();
+            if (!csvData) {
+                renderPrintPages([{}], currentData, false);
+            } else {
+                renderPrintPages(csvData.rows, currentData, true);
+            }
+        }
+
+        function renderPrintPages(rows, projectData, doMerge) {
+            rows.forEach(row => {
+                projectData.pages.forEach(pData => {
+                    const pageDiv = document.createElement('div');
+                    pageDiv.className = 'editor-page' + (pData.width > pData.height ? ' landscape' : '');
+                    const img = document.createElement('img');
+                    img.src = pData.imageBase64;
+                    pageDiv.appendChild(img);
+
+                    pData.inputs.forEach(inp => {
+                        let displayText = inp.text;
+                        if (doMerge) {
+                            csvData.headers.forEach((header, colIndex) => {
+                                const placeholder = `{{${header}}}`;
+                                const rawVal = row[colIndex];
+                                const val = (rawVal !== undefined && rawVal !== null) ? rawVal : '';
+                                displayText = displayText.split(placeholder).join(val);
+                            });
+                        }
+                        const box = document.createElement('div');
+                        box.className = 'input-placeholder';
+                        box.style.left = inp.xPct + '%'; box.style.top = inp.yPct + '%';
+                        box.style.width = inp.wPct + '%'; box.style.height = inp.hPct + '%';
+                        box.style.border = 'none'; box.style.background = 'transparent';
+                        const textarea = document.createElement('textarea');
+                        textarea.value = displayText;
+                        textarea.style.fontSize = inp.fontSize + 'px';
+                        pageDiv.appendChild(box); box.appendChild(textarea);
+                    });
+                    printArea.appendChild(pageDiv);
+                });
+            });
+        }
+
+        // --- PDF Processing ---
+        async function processPdf(file) {
+            if (!file) return;
+            resetEditor();
+            statusEl.textContent = 'PDFを解析中...';
+            currentFileName = file.name.replace(/\.pdf$/i, '');
+            try {
+                const pdf = await pdfjsLib.getDocument(await file.arrayBuffer()).promise;
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    statusEl.textContent = `ページ変換中... (${i} / ${pdf.numPages})`;
+                    const page = await pdf.getPage(i);
+                    const viewportCheck = page.getViewport({ scale: 1.0 });
+                    const isLandscape = viewportCheck.width > viewportCheck.height;
+                    const viewport = page.getViewport({ scale: 3.0 });
+                    const canvas = document.createElement('canvas');
+                    canvas.width = viewport.width; canvas.height = viewport.height;
+                    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                    
+                    const base64 = canvas.toDataURL('image/jpeg', 0.85);
+                    convertedPagesData.push({ id: i, base64, isLandscape });
+                    appendPageToEditor(i, base64, isLandscape);
+                }
+                finishLoading();
+                triggerAutoSave();
+            } catch (error) { statusEl.textContent = 'エラー: ' + error.message; }
+        }
+
+        function resetEditor() {
+            editorArea.innerHTML = editorArea.querySelector('.helper-text').outerHTML;
+            editorArea.style.display = 'none'; uploadSection.style.display = 'block';
+            convertedPagesData = []; statusEl.textContent = '';
+        }
+
+        function finishLoading() {
+            uploadSection.style.display = 'none'; statusEl.textContent = '✅ 準備完了';
+            editorArea.style.display = 'flex';
+        }
+
+        function appendPageToEditor(pageIndex, base64, isLandscape) {
+            const pageDiv = document.createElement('div');
+            pageDiv.className = 'editor-page' + (isLandscape ? ' landscape' : '');
+            pageDiv.id = `page-${pageIndex}`;
+            
+            const img = document.createElement('img'); img.src = base64;
+            pageDiv.appendChild(img);
+            
+            const startBoxCreation = (clientX, clientY) => {
+                const rect = pageDiv.getBoundingClientRect();
+                createInputBox(pageDiv, clientX - rect.left, clientY - rect.top, 150, 50, '{{氏名}}', 16);
+                triggerAutoSave();
+            };
+
+            img.addEventListener('mousedown', (e) => startBoxCreation(e.clientX, e.clientY));
+            img.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                const touch = e.touches[0];
+                startBoxCreation(touch.clientX, touch.clientY);
+            }, { passive: false });
+
+            editorArea.appendChild(pageDiv);
+        }
+
+        function createInputBox(parent, x, y, w, h, textContent, fontSize = 16) {
+            const box = document.createElement('div');
+            box.className = 'input-placeholder';
+            
+            const setResponsiveStyle = (leftPx, topPx, widthPx, heightPx) => {
+                const pW = parent.offsetWidth; const pH = parent.offsetHeight;
+                box.style.left = (leftPx / pW * 100) + '%';
+                box.style.top = (topPx / pH * 100) + '%';
+                box.style.width = (widthPx / pW * 100) + '%';
+                box.style.height = (heightPx / pH * 100) + '%';
+            };
+
+            box.style.left = x + 'px'; box.style.top = y + 'px';
+            box.style.width = w + 'px'; box.style.height = h + 'px';
+            setTimeout(() => setResponsiveStyle(x, y, w, h), 0);
+
+            const ctrlBar = document.createElement('div');
+            ctrlBar.className = 'control-bar';
+
+            const handle = document.createElement('div');
+            handle.className = 'move-handle';
+            
+            const fsInput = document.createElement('input');
+            fsInput.type = 'number'; fsInput.className = 'font-size-input';
+            fsInput.value = fontSize; fsInput.min = 6; fsInput.max = 100;
+            fsInput.addEventListener('mousedown', e => e.stopPropagation());
+            fsInput.addEventListener('touchstart', e => e.stopPropagation());
+            fsInput.addEventListener('input', (e) => {
+                textarea.style.fontSize = e.target.value + 'px';
+                triggerAutoSave();
+            });
+
+            const delBtn = document.createElement('div');
+            delBtn.className = 'delete-btn';
+            delBtn.innerHTML = '×';
+            const deleteAction = (e) => { e.stopPropagation(); e.preventDefault(); box.remove(); triggerAutoSave(); };
+            delBtn.onclick = deleteAction;
+            delBtn.ontouchend = deleteAction;
+
+            ctrlBar.append(handle, fsInput, delBtn);
+
+            const textarea = document.createElement('textarea');
+            textarea.value = textContent;
+            textarea.style.fontSize = fontSize + 'px';
+            textarea.addEventListener('input', triggerAutoSave);
+            
+            box.addEventListener('mouseup', () => {
+                setResponsiveStyle(box.offsetLeft, box.offsetTop, box.offsetWidth, box.offsetHeight);
+                triggerAutoSave();
+            });
+            box.addEventListener('touchend', () => {
+                setResponsiveStyle(box.offsetLeft, box.offsetTop, box.offsetWidth, box.offsetHeight);
+                triggerAutoSave();
+            });
+
+            box.append(ctrlBar, textarea);
+
+            let isDragging = false, startX, startY, initLeft, initTop;
+
+            const startDrag = (clientX, clientY) => {
+                isDragging = true; startX = clientX; startY = clientY;
+                initLeft = box.offsetLeft; initTop = box.offsetTop;
+                box.style.left = initLeft + 'px';
+                box.style.top = initTop + 'px';
+                box.style.width = box.offsetWidth + 'px';
+                box.style.height = box.offsetHeight + 'px';
+            };
+
+            const moveDrag = (clientX, clientY) => {
+                if (!isDragging) return;
+                box.style.left = (initLeft + (clientX - startX)) + 'px';
+                box.style.top = (initTop + (clientY - startY)) + 'px';
+            };
+
+            const endDrag = () => {
+                if(isDragging) {
+                    isDragging = false; 
+                    setResponsiveStyle(box.offsetLeft, box.offsetTop, box.offsetWidth, box.offsetHeight);
+                    triggerAutoSave(); 
+                }
+            };
+
+            handle.addEventListener('mousedown', (e) => {
+                e.stopPropagation(); document.body.style.cursor = 'grabbing';
+                startDrag(e.clientX, e.clientY);
+            });
+            window.addEventListener('mousemove', (e) => moveDrag(e.clientX, e.clientY));
+            window.addEventListener('mouseup', () => { document.body.style.cursor = 'default'; endDrag(); });
+
+            handle.addEventListener('touchstart', (e) => {
+                e.stopPropagation(); e.preventDefault();
+                const t = e.touches[0];
+                startDrag(t.clientX, t.clientY);
+            }, { passive: false });
+            window.addEventListener('touchmove', (e) => {
+                if(isDragging) e.preventDefault();
+                const t = e.touches[0];
+                moveDrag(t.clientX, t.clientY);
+            }, { passive: false });
+            window.addEventListener('touchend', endDrag);
+
+            parent.appendChild(box);
+        }
+
+        // --- Data Handling ---
+        function collectProjectData() {
+            const data = { meta: { version: "3.0", fileName: currentFileName, createdAt: new Date().toISOString() }, pages: [] };
+            document.querySelectorAll('#editorArea .editor-page').forEach((page, index) => {
+                const img = page.querySelector('img');
+                const pW = page.clientWidth; const pH = page.clientHeight;
+                const inputs = [];
+                page.querySelectorAll('.input-placeholder').forEach(box => {
+                    inputs.push({
+                        xPct: (box.offsetLeft / pW) * 100,
+                        yPct: (box.offsetTop / pH) * 100,
+                        wPct: (box.offsetWidth / pW) * 100,
+                        hPct: (box.offsetHeight / pH) * 100,
+                        text: box.querySelector('textarea').value,
+                        fontSize: parseInt(box.querySelector('.font-size-input').value, 10)
+                    });
+                });
+                data.pages.push({
+                    pageId: index + 1,
+                    width: img.naturalWidth, height: img.naturalHeight,
+                    imageBase64: convertedPagesData[index].base64,
+                    inputs: inputs
+                });
+            });
+            return data;
+        }
+
+        function loadProjectData(project) {
+            isRestoring = true; resetEditor();
+            currentFileName = (project.meta && project.meta.fileName) ? project.meta.fileName : "project";
+            const pages = project.pages || [];
+            
+            pages.forEach((pData, index) => {
+                const b64 = pData.imageBase64 || pData.base64;
+                const imgObj = new Image(); imgObj.src = b64;
+                imgObj.onload = () => {
+                    const isLandscape = imgObj.width > imgObj.height;
+                    convertedPagesData.push({ id: index + 1, base64: b64, isLandscape });
+                    appendPageToEditor(index + 1, b64, isLandscape);
+                    
+                    const pageDiv = document.getElementById(`page-${index + 1}`);
+                    setTimeout(() => {
+                        if (pData.inputs) {
+                            pData.inputs.forEach(inp => {
+                                let x, y, w, h;
+                                const pW = pageDiv.clientWidth, pH = pageDiv.clientHeight;
+                                if (inp.xPct !== undefined) {
+                                    x = (inp.xPct / 100) * pW; y = (inp.yPct / 100) * pH; 
+                                    w = (inp.wPct / 100) * pW; h = (inp.hPct / 100) * pH;
+                                } else {
+                                    x = inp.x || inp.left; y = inp.y || inp.top; w = inp.width; h = inp.height;
+                                }
+                                createInputBox(pageDiv, x, y, w, h, inp.text, inp.fontSize || 16);
+                            });
+                        }
+                    }, 50);
+                };
+            });
+            finishLoading(); updateAutoSaveStatus('saved'); isRestoring = false;
+        }
+
+        function loadProjectFile(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => { try { loadProjectData(JSON.parse(e.target.result)); triggerAutoSave(); } catch (err) { alert("読込失敗: " + err.message); } };
+            reader.readAsText(file);
+        }
+    </script>
+</body>
+</html>
